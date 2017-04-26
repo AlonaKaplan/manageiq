@@ -196,4 +196,89 @@ describe ManageIQ::Providers::Redhat::InfraManager::ProvisionWorkflow do
       workflow.make_request(request, values)
     end
   end
+
+  context "load allowed vlans" do
+    let(:cluster1) { FactoryGirl.create(:ems_cluster, :uid_ems => "uid_ems", :name => 'Cluster1') }
+    let(:template) { FactoryGirl.create(:template_redhat, :ext_management_system => ems, :ems_cluster => cluster1) }
+    let(:workflow) { described_class.new({:src_vm_id => template.id}, admin) }
+    let(:hosts) { {} }
+    before do
+      allow(workflow).to receive(:get_ems).and_return(ems)
+      @vlans = {}
+    end
+    context "ems version 3" do
+      before do
+        allow(ems).to receive_messages(:supports_update_vnic_profile? => false)
+      end
+      it "doesn't invoke v4 code" do
+        expect(workflow).not_to receive(:load_v4_allowed_vlans)
+        workflow.load_allowed_vlans(hosts, @vlans)
+      end
+    end
+
+    context "ems version 4" do
+      let(:system_service) { double("system_service", :clusters_service => clusters_service, :vnic_profiles_service => vnic_profiles_service) }
+      let(:connection) { double("connection", :system_service => system_service) }
+      let(:vnic_profiles_service) { "vnic_profiles_service" }
+      let(:clusters_service) { double("clusters_service") }
+      let(:cluster_service1) { double("cluster", :networks_service => networks_service) }
+      let(:networks_service) { "networks_service" }
+      let(:vm_network_profile) { double(:id => "vm_network_profile-id", :name => "vm_network_profile", :network => double(:id => vm_network_id) ) }
+      let(:vm_network_profile2) { double(:id => "vm_network_profile-id2", :name => "vm_network_profile2", :network => double(:id => vm_network_id) ) }
+      let(:vm_network) { double(:id => vm_network_id, :name => "vm_network", :usages => ["vm"]) }
+      let(:vm_network_id) { "vm_network_id" }
+      let(:non_vm_network_profile) { double(:id => "non_vm_network_profile-id", :name => "non_vm_network_profile", :network => double(:id => non_vm_network_id) ) }
+      let(:non_vm_network) { double(:id => non_vm_network_id, :name => "non_vm_network", :usages => []) }
+      let(:non_vm_network_id) { "non_vm_network_id" }
+      before do
+        allow_any_instance_of(ManageIQ::Providers::Redhat::InfraManager).to receive(:supported_api_versions)
+                                                                                .and_return([4])
+        allow(ems).to receive_messages(:supports_update_vnic_profile? => true)
+        allow(ems).to receive(:with_provider_connection).with(:version => 4).and_yield(connection)
+        allow(clusters_service).to receive(:cluster_service).with(any_args).and_return(cluster_service1)
+        allow(VmOrTemplate).to receive(:find).with(any_args).and_return(template)
+      end
+      it "invokes v4 code" do
+        allow(vnic_profiles_service).to receive(:list).and_return([])
+        allow(networks_service).to receive(:list).and_return([])
+        expect(workflow).to receive(:load_v4_allowed_vlans)
+        workflow.load_allowed_vlans(hosts, @vlans)
+      end
+      it "no profiles" do
+        allow(networks_service).to receive(:list).and_return([])
+        allow(vnic_profiles_service).to receive(:list).and_return([])
+
+        workflow.load_v4_allowed_vlans(ems, @vlans)
+        expect(@vlans).to eq({"<Empty>"=>"<Empty>"})
+      end
+      it "only non-vm profile" do
+        allow(networks_service).to receive(:list).and_return([non_vm_network])
+        allow(vnic_profiles_service).to receive(:list).and_return([non_vm_network_profile])
+
+        workflow.load_v4_allowed_vlans(ems, @vlans)
+        expect(@vlans).to eq({"<Empty>"=>"<Empty>"})
+      end
+      it "contains one vm profile" do
+        allow(networks_service).to receive(:list).and_return([vm_network])
+        allow(vnic_profiles_service).to receive(:list).and_return([vm_network_profile])
+
+        workflow.load_v4_allowed_vlans(ems, @vlans)
+        expect(@vlans).to eq({"vm_network_profile-id"=>"vm_network_profile (vm_network)", "<Empty>"=>"<Empty>"})
+      end
+      it "contains two vm profiles on the same network" do
+        allow(networks_service).to receive(:list).and_return([vm_network])
+        allow(vnic_profiles_service).to receive(:list).and_return([vm_network_profile, vm_network_profile2])
+
+        workflow.load_v4_allowed_vlans(ems, @vlans)
+        expect(@vlans).to eq({"vm_network_profile-id"=>"vm_network_profile (vm_network)", "vm_network_profile-id2"=>"vm_network_profile2 (vm_network)", "<Empty>"=>"<Empty>"})
+      end
+      it "contains vm and non-vm profiles" do
+        allow(networks_service).to receive(:list).and_return([vm_network, non_vm_network])
+        allow(vnic_profiles_service).to receive(:list).and_return([vm_network_profile, vm_network_profile2, non_vm_network_profile])
+
+        workflow.load_v4_allowed_vlans(ems, @vlans)
+        expect(@vlans).to eq({"vm_network_profile-id"=>"vm_network_profile (vm_network)", "vm_network_profile-id2"=>"vm_network_profile2 (vm_network)", "<Empty>"=>"<Empty>"})
+      end
+    end
+  end
 end

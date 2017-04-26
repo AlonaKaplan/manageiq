@@ -118,6 +118,7 @@ module SupportsFeatureMixin
     :update_aggregate           => 'Host Aggregate Update',
     :update                     => 'Update',
     :update_floating_ip         => 'Update Floating IP association',
+    :update_vnic_profile        => 'Update Vm Network Interface Profile',
     :update_network_router      => 'Network Router Update',
     :ems_network_new            => 'New EMS Network Provider',
     :update_security_group      => 'Security Group Update',
